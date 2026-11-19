@@ -28,5 +28,7 @@ integration: ## Build real single-app and umbrella releases through the plugin a
 
 check: compile test xref integration ## Run all pre-PR checks
 
-release: check ## Bump the version, tag, push, and publish to Hex - runs check first
+release: check ## Bump the version, tag, push, publish to Hex, and create a GitHub release - runs check first
 	rebar3 hex cut
+	git push --tags
+	gh release create "v$$(sed -n 's/.*{vsn, "\(.*\)"}.*/\1/p' src/rebar3_jellyfish_plugin.app.src)" --generate-notes
