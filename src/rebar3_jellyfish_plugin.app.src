@@ -1,0 +1,13 @@
+{application, rebar3_jellyfish_plugin, [
+    {description, "Generates appup files for zero-downtime Erlang hot code upgrades"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {applications, [
+        kernel,
+        stdlib
+    ]},
+    {env, []},
+    {modules, []},
+    {licenses, ["MIT"]},
+    {links, [{"GitHub", "https://github.com/deployex/rebar3_jellyfish_plugin"}]}
+]}.

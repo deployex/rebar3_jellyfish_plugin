@@ -1,0 +1,115 @@
+# rebar3_jellyfish_plugin
+
+> Simplifying Hot-Upgrades for Erlang Applications
+
+`rebar3_jellyfish_plugin` is a rebar3 plugin that generates appup files for hot-upgrades in Erlang applications, single-app or umbrella, without requiring an Elixir toolchain.
+It's a native-Erlang counterpart to [Jellyfish](https://github.com/deployex/jellyfish): the same beam-diffing and topological-sort approach, reimplemented in Erlang, producing the same `jellyfish.json` sidecar file alongside each generated `.appup`.
+That shared contract lets tools like [DeployEx](https://github.com/deployex/deployex) recognize and validate hot-upgrade packages the same way regardless of whether the release was built with `mix` or `rebar3`.
+
+## What are Appup Files?
+
+Appup files describe how to upgrade and downgrade an application from one version to another.
+They contain:
+
+ * The application name
+ * Instructions to upgrade to a newer version
+ * Instructions to downgrade to the original version
+
+For detailed information about the appup format, see the [Erlang appup manual](https://www.erlang.org/doc/man/appup.html).
+
+## Important Upgrade Ordering
+
+When upgrading processes, order matters:
+
+ * Processes are suspended during upgrades
+ * In-flight requests are handled by the old version until the upgrade completes
+ * Dependencies are upgraded before their dependents (e.g. if `proc_a` depends on `proc_b`, `proc_b` is upgraded first)
+ * The plugin automatically performs topological sorting when generating appups
+
+## Installation
+
+Add the plugin to `rebar.config`, hook it after `compile`, and add one static overlay rule to the project's `relx` config:
+
+```erlang
+{project_plugins, [
+    {rebar3_jellyfish_plugin, "0.1.0"}
+]}.
+
+{provider_hooks, [
+    {post, [{compile, {jellyfish, appup}}]}
+]}.
+
+{relx, [
+    {release, {my_app, "0.1.0"}, [my_app]},
+    ...,
+    {overlay, [{copy, "rel/appups/lib", "lib"}]}
+]}.
+```
+
+Once a previous version is found on disk, every subsequent `rebar3 release`, `rebar3 tar` or `rebar3 relup` generates the appup file right after compiling and copies it into the release.
+
+The hook runs on `compile` rather than on `release`/`tar` directly, for two reasons:
+
+ * `rebar3 tar` assembles its release internally without ever dispatching through the `release` provider, so a `{post, [{release, ...}]}` hook never fires for it.
+ * Writing files straight into an already-assembled release's `lib/` directory doesn't survive a second `rebar3 tar`, since it also re-assembles from scratch and overwrites that directory.
+
+Hooking `compile` and delivering the generated files through a static `overlay` rule - rather than writing them into the release tree directly - is what actually survives both commands, since relx applies overlays as one of the last steps of assembling a release no matter which top-level command triggered that assembly.
+The overlay rule is written once and never needs to change between releases: the plugin always stages files under the versioned path the overlay already points at.
+
+### Hot-Upgrading Dependencies (Optional)
+
+The plugin generates appup files for both your application code and your dependencies, so third-party libraries can be upgraded at runtime alongside your own code changes.
+Only dependencies that are part of the current profile (and therefore the release) are considered - there's no separate configuration for this, it follows rebar3's own profile system.
+
+> [!WARNING]
+> Not all code changes are safe for hot-upgrades.
+> Before performing a hot-upgrade, check whether the dependency supports hot-upgrades between versions, review the changelog for structural changes (e.g. process state modifications, API changes), and check stateful processes like `gen_server`s that may require special handling.
+> You can do this analysis yourself, or ask an LLM-based coding assistant to review the diff and changelog between the two versions and flag anything that looks unsafe for a hot-upgrade - but either way, someone should look before you ship it.
+
+## Appup file
+
+If for any reason you need to change the order of the modules or add new instructions to the generated appup file, set the `EDIT_APPUP` environment variable before building the release:
+
+```bash
+EDIT_APPUP=true rebar3 tar
+```
+
+The build will pause right after generating each appup, with its path printed, so you can edit it before it's copied into the release.
+Since the hook runs on every `compile`, only set `EDIT_APPUP` for the specific command that builds the release you're about to edit - leaving it set would pause every ordinary `rebar3 compile` or `rebar3 eunit` run too, not just packaging ones.
+
+## Relup file
+
+The plugin focuses on generating appup files and copying them into the release.
+It doesn't create relup files directly.
+The relup file is typically created during a hot upgrade with the [DeployEx](https://github.com/deployex/deployex) application.
+
+## The jellyfish.json file
+
+Alongside every `.appup` file, the plugin writes a `jellyfish.json` file into the same `ebin` directory.
+This is the signal a tool like DeployEx should check before trusting an `.appup` file, rather than the mere presence of the `.appup` itself - a dependency can legitimately ship its own `.appup` for unrelated reasons, and treating that as a hot-upgrade instruction would be a mistake.
+
+It contains:
+
+```json
+{
+  "name": "my_app",
+  "type": "project",
+  "from": "0.1.0",
+  "to": "0.1.1",
+  "format_version": 1,
+  "generator": "rebar3_jellyfish_plugin/0.1.0"
+}
+```
+
+See [Jellyfish's own documentation of this format](https://github.com/deployex/jellyfish#the-jellyfishjson-file) for the full field reference - it's the same contract, shared by both tools.
+
+## Erlang Umbrella applications
+
+Umbrella (multi-app) rebar3 projects work the same way as single-app ones: the plugin processes every app returned by `rebar3`'s own project-apps discovery, so no extra umbrella-specific configuration is needed.
+Unlike Elixir umbrella apps, rebar3 apps already each carry their own independent version, so there's no equivalent of Jellyfish's shared-version-file recommendation to follow here.
+
+## Copyright and License
+
+Copyright (c) 2026, Thiago Esteves.
+
+`rebar3_jellyfish_plugin` source code is licensed under the [MIT License](LICENSE.md).
