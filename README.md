@@ -108,6 +108,16 @@ See [Jellyfish's own documentation of this format](https://github.com/deployex/j
 Umbrella (multi-app) rebar3 projects work the same way as single-app ones: the plugin processes every app returned by `rebar3`'s own project-apps discovery, so no extra umbrella-specific configuration is needed.
 Unlike Elixir umbrella apps, rebar3 apps already each carry their own independent version, so there's no equivalent of Jellyfish's shared-version-file recommendation to follow here.
 
+## Development
+
+`make help` lists the available developer targets (compiling, the unit test suite, xref, the integration test, and a `check` target that runs all of them - see the [Makefile](Makefile)).
+
+### Releasing
+
+Published to [Hex](https://hex.pm/packages/rebar3_jellyfish_plugin) via [rebar3_hex](https://github.com/hexpm/rebar3_hex).
+`make release` runs `make check` and then `rebar3 hex cut`, which bumps the version, commits, tags, pushes, and publishes the package (and its docs) interactively - review its prompts and the file manifest it shows before confirming.
+Publishing requires a Hex account authenticated once per machine via `rebar3 hex user auth`.
+
 ## Copyright and License
 
 Copyright (c) 2026, Thiago Esteves.
