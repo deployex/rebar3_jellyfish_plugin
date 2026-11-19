@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (OTP ${{ matrix.otp }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        otp: [27, 28, 29]
+    env:
+      REBAR3_VERSION: "3.27.0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup BEAM
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          rebar3-version: ${{ env.REBAR3_VERSION }}
+
+      - name: Cache
+        uses: actions/cache@v6
+        with:
+          path: _build
+          key: |
+            rebar3_jellyfish_plugin-${{ matrix.otp }}-${{ env.REBAR3_VERSION }}-${{ hashFiles('rebar.lock') }}
+          restore-keys: |
+            rebar3_jellyfish_plugin-${{ matrix.otp }}-${{ env.REBAR3_VERSION }}-
+
+      - name: Compile
+        run: rebar3 compile
+
+      - name: EUnit
+        run: rebar3 eunit
+
+      - name: Xref
+        run: rebar3 xref
+
+  integration:
+    name: Integration (OTP ${{ matrix.otp }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        otp: [27, 28, 29]
+    env:
+      REBAR3_VERSION: "3.27.0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup BEAM
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          rebar3-version: ${{ env.REBAR3_VERSION }}
+
+      - name: Configure git identity for the plugin snapshot commit
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "ci"
+
+      - name: Build single-app and umbrella releases through the plugin and inspect the tarball
+        run: bash test/integration/run.sh

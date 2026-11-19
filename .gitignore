@@ -1,0 +1,13 @@
+.rebar3
+_build/
+rebar3.crashdump
+*.beam
+*~
+erl_crash.dump
+
+# Where appups are staged before being copied into a release, for local
+# testing. Consuming projects set their own ignore rule for this.
+rel/appups/
+
+# Ignore .tool-versions file
+.tool-versions
