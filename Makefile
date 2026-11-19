@@ -4,11 +4,15 @@
 # toolchain matches .tool-versions.
 
 .DEFAULT_GOAL := help
-.PHONY: help compile test xref integration check release
+.PHONY: help clean compile test xref integration check release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+
+clean: ## Remove build artifacts
+	rebar3 clean
+	rm -rf _build
 
 compile: ## Compile the plugin
 	rebar3 compile

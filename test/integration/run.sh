@@ -17,6 +17,25 @@ PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
+# A directory under the system tmp dir has no .tool-versions above it, so an
+# asdf install with no *global* erlang/rebar default (only a per-project one)
+# fails to resolve `rebar3`/`erl` there with "No version is set". Pin the
+# scratch dir to whatever asdf already resolves right here, so every
+# project built under WORKDIR inherits the same toolchain regardless of
+# global asdf config. A no-op when asdf isn't in use - rebar3/erl are then
+# just whatever's already on PATH.
+if command -v asdf >/dev/null 2>&1; then
+    # `asdf current <plugin>` itself exits non-zero (with placeholder "______"
+    # output) when nothing resolves, rather than a clean empty result - the
+    # `|| true` keeps that from aborting the whole script under `set -e`;
+    # the regex check below is what actually filters the placeholder out.
+    erl_vsn="$(asdf current erlang 2>/dev/null | awk '$1=="erlang"{print $2}' || true)"
+    rebar_vsn="$(asdf current rebar 2>/dev/null | awk '$1=="rebar"{print $2}' || true)"
+    if [[ "$erl_vsn" =~ ^[0-9] ]] && [[ "$rebar_vsn" =~ ^[0-9] ]]; then
+        printf 'erlang %s\nrebar %s\n' "$erl_vsn" "$rebar_vsn" >"$WORKDIR/.tool-versions"
+    fi
+fi
+
 PASS=0
 FAIL=0
 
