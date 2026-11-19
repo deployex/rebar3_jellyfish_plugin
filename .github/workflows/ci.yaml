@@ -14,7 +14,7 @@ jobs:
       matrix:
         otp: [27, 28, 29]
     env:
-      REBAR3_VERSION: "3.27.0"
+      REBAR3_VERSION: "3.28.0"
     steps:
       - uses: actions/checkout@v7
 
@@ -49,7 +49,7 @@ jobs:
       matrix:
         otp: [27, 28, 29]
     env:
-      REBAR3_VERSION: "3.27.0"
+      REBAR3_VERSION: "3.28.0"
     steps:
       - uses: actions/checkout@v7
 

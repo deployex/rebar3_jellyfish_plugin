@@ -114,9 +114,12 @@ Unlike Elixir umbrella apps, rebar3 apps already each carry their own independen
 
 ### Releasing
 
-Published to [Hex](https://hex.pm/packages/rebar3_jellyfish_plugin) via [rebar3_hex](https://github.com/hexpm/rebar3_hex).
+Published to [Hex](https://hex.pm/packages/rebar3_jellyfish_plugin) via [rebar3_hex](https://github.com/erlef/rebar3_hex).
 `make release` runs `make check` and then `rebar3 hex cut`, which bumps the version, commits, tags, pushes, and publishes the package (and its docs) interactively - review its prompts and the file manifest it shows before confirming.
 Publishing requires a Hex account authenticated once per machine via `rebar3 hex user auth`.
+
+> [!IMPORTANT]
+> `rebar3_hex` >= 7.3.0 requires **rebar3 >= 3.27.1** - it added native Hex auth support that calls into a module only that rebar3 version and later provide. An older rebar3 fails with `{undef, [{rebar_hex_auth, client_id, [], []}, ...]}` when running `rebar3 hex user auth`/`cut`/`publish`. Check with `rebar3 --version` and upgrade (`asdf install rebar <version>` or equivalent) if needed.
 
 ## Copyright and License
 
