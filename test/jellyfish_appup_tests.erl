@@ -82,6 +82,24 @@ supervisor_change_test() ->
     ?assertEqual([{update, jf_fixture_sup, supervisor}], Up),
     ?assertEqual([{update, jf_fixture_sup, supervisor}], Down).
 
+% Documents a known limitation (see the README's "Known Limitations"
+% section, and the Erlang appup cookbook on supervisor child specs): adding
+% a child to a supervisor's init/1 is, from beam_lib's point of view, just
+% an ordinary module change, so it only ever produces the generic
+% {update, M, supervisor} instruction. That instruction adds the new
+% child's spec, but never actually starts (or, on removal, stops) the
+% corresponding process - a hand-added {apply, {supervisor, start_child,
+% [...]}} instruction via EDIT_APPUP is required for that.
+supervisor_added_child_test() ->
+    V1 = build_fixture("0.1.0", fun supervisor_added_child_v1/0),
+    V2 = build_fixture("0.2.0", fun supervisor_added_child_v2/0),
+
+    {ok, {"0.2.0", [{"0.1.0", Up}], [{"0.1.0", Down}]}} =
+        jellyfish_appup:make(fixture_app, "0.1.0", "0.2.0", V1, V2),
+
+    ?assertEqual([{update, jf_fixture_sup, supervisor}], Up),
+    ?assertEqual([{update, jf_fixture_sup, supervisor}], Down).
+
 deleted_module_test() ->
     V1 = build_fixture("0.1.0", fun worker_v1/0),
     V2 = build_fixture("0.2.0", fun() -> [] end),
@@ -238,6 +256,26 @@ supervisor_v2() ->
             "-behaviour(supervisor).\n"
             "-export([init/1]).\n"
             "init([]) -> {ok, {{one_for_one, 3, 10}, []}}.\n"}
+    ].
+
+supervisor_added_child_v1() ->
+    [
+        {jf_fixture_sup,
+            "-module(jf_fixture_sup).\n"
+            "-behaviour(supervisor).\n"
+            "-export([init/1]).\n"
+            "init([]) -> {ok, {{one_for_one, 5, 10}, [child_spec(worker_one)]}}.\n"
+            "child_spec(Id) -> #{id => Id, start => {jf_fixture_sup, noop, []}}.\n"}
+    ].
+
+supervisor_added_child_v2() ->
+    [
+        {jf_fixture_sup,
+            "-module(jf_fixture_sup).\n"
+            "-behaviour(supervisor).\n"
+            "-export([init/1]).\n"
+            "init([]) -> {ok, {{one_for_one, 5, 10}, [child_spec(worker_one), child_spec(worker_two)]}}.\n"
+            "child_spec(Id) -> #{id => Id, start => {jf_fixture_sup, noop, []}}.\n"}
     ].
 
 two_modules_v1() ->

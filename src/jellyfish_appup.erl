@@ -154,6 +154,16 @@ is_supervisor(Attributes) ->
     lists:member(supervisor, Behaviours).
 
 % supervisor
+%
+% Per the Erlang appup cookbook (https://www.erlang.org/doc/system/appup_cookbook.html),
+% this generic instruction is enough for the release handler to pick up a
+% changed existing child spec (once that child restarts for some other
+% reason), but a child added to or removed from the supervisor's init/1 is,
+% from beam_lib's point of view, just an ordinary module change - it does
+% NOT get its process started or stopped by this instruction alone. That
+% needs a hand-added {apply, {supervisor, start_child/terminate_child/
+% delete_child, [...]}} instruction - see the README's "Known Limitations"
+% section and use EDIT_APPUP to add it.
 generate_instruction_advanced(M, true, _IsSpecial, _DepMods) ->
     {update, M, supervisor};
 % special process (i.e. exports code_change/3 or system_code_change/4)
