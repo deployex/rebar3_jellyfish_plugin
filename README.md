@@ -108,6 +108,26 @@ See [Jellyfish's own documentation of this format](https://github.com/deployex/j
 Umbrella (multi-app) rebar3 projects work the same way as single-app ones: the plugin processes every app returned by `rebar3`'s own project-apps discovery, so no extra umbrella-specific configuration is needed.
 Unlike Elixir umbrella apps, rebar3 apps already each carry their own independent version, so there's no equivalent of Jellyfish's shared-version-file recommendation to follow here.
 
+## Known Limitations
+
+### Supervisor child changes
+
+When a supervisor module changes, the plugin always emits the generic `{update, Module, supervisor}` instruction.
+This instruction lets the release handler pick up changes to an existing child's spec, such as its start function or restart type, but only once that child restarts for some other reason - a running child keeps its old spec until then.
+Per the [Erlang appup cookbook](https://www.erlang.org/doc/system/appup_cookbook.html), a new child specification is added automatically, but the matching child process is not started, and a removed child's process is not stopped.
+So if a release adds or removes a supervisor's child, the generated appup alone will not start or stop that process.
+The upgrade will look successful while quietly leaving a new worker un-started, or a removed one still running.
+Use `EDIT_APPUP=true rebar3 tar` to add the missing `{apply, {supervisor, start_child, [...]}}`, `{apply, {supervisor, terminate_child, [...]}}`, or `{apply, {supervisor, delete_child, [...]}}` instructions by hand whenever a release changes a supervisor's children, not just its properties.
+
+### NIFs and non-OTP processes
+
+The instructions this plugin generates use the short appup forms, such as `{load_module, Module}` and `{update, Module, {advanced, Extra}}`.
+Per the [appup file format reference](https://www.erlang.org/doc/apps/sasl/appup.html), these short forms default to `brutal_purge` for both the pre-purge and post-purge steps.
+`brutal_purge` kills any process still executing old code at purge time instead of waiting for it to finish.
+That's safe for a `gen_server`, `gen_statem`, or supervisor, since the standard upgrade protocol suspends and resumes those processes around the code swap, so none of them are still running old code by the time the purge happens.
+It's not safe for a process that doesn't go through that suspend/resume protocol, such as a plain `spawn_link` loop or a process blocked inside a NIF call, since that process can still be executing old code when the purge runs and gets killed outright.
+If a release touches a NIF-loaded module or a hand-rolled, non-OTP process, review whether `brutal_purge` is appropriate before shipping the upgrade, and use `EDIT_APPUP=true rebar3 tar` to switch the relevant instruction to `soft_purge` if it isn't.
+
 ## Development
 
 `make help` lists the available developer targets (compiling, the unit test suite, xref, the integration test, and a `check` target that runs all of them - see the [Makefile](Makefile)).
