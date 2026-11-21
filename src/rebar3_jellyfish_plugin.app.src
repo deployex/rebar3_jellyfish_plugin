@@ -1,6 +1,6 @@
 {application, rebar3_jellyfish_plugin, [
     {description, "Generates appup files for zero-downtime Erlang hot code upgrades"},
-    {vsn, "0.1.0"},
+    {vsn, "0.1.1"},
     {registered, []},
     {applications, [
         kernel,
