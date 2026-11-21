@@ -109,7 +109,18 @@ generate_instruction(deleted, File) ->
 generate_instruction(changed, {V1File, V2File}) ->
     ModuleName = module_name(V1File),
     Attributes = beam_attributes(V1File),
-    Exports = beam_exports(V1File),
+    % Whether code_change/3 (or system_code_change/4) is exported must be
+    % checked on the NEW (V2) beam, not the old one. Per OTP's release
+    % handler (systools_rc.erl), code_change always runs against whichever
+    % module version V2 is: on upgrade it runs after the new code is
+    % loaded, and on downgrade it runs before the old code is loaded back,
+    % so in both directions it is V2's code_change/3 clause that actually
+    % fires. A module that only gains code_change/3 in V2 (the common case:
+    % it's added specifically to migrate a changed state shape) must still
+    % get the `advanced` update instruction, or that migration code never
+    % runs and processes keep executing against the new module with
+    % old-shape state.
+    Exports = beam_exports(V2File),
     Imports = beam_imports(V2File),
     IsSupervisor = is_supervisor(Attributes),
     IsSpecialProcess = is_special_process(Exports),
