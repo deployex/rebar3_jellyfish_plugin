@@ -268,21 +268,21 @@ worker_plus_doomed_v1() ->
 soft_worker_v1() ->
     [
         {jf_fixture_soft_worker,
-            "-module(jf_fixture_soft_worker).\\n"
-            "-behaviour(gen_server).\\n"
-            "-export([init/1, handle_call/3]).\\n"
-            "init(_Args) -> {ok, v1}.\\n"
-            "handle_call(_Req, _From, State) -> {reply, ok, State}.\\n"}
+            "-module(jf_fixture_soft_worker).\n"
+            "-behaviour(gen_server).\n"
+            "-export([init/1, handle_call/3]).\n"
+            "init(_Args) -> {ok, v1}.\n"
+            "handle_call(_Req, _From, State) -> {reply, ok, State}.\n"}
     ].
 
 soft_worker_v2() ->
     [
         {jf_fixture_soft_worker,
-            "-module(jf_fixture_soft_worker).\\n"
-            "-behaviour(gen_server).\\n"
-            "-export([init/1, handle_call/3]).\\n"
-            "init(_Args) -> {ok, v2}.\\n"
-            "handle_call(_Req, _From, State) -> {reply, ok, State}.\\n"}
+            "-module(jf_fixture_soft_worker).\n"
+            "-behaviour(gen_server).\n"
+            "-export([init/1, handle_call/3]).\n"
+            "init(_Args) -> {ok, v2}.\n"
+            "handle_call(_Req, _From, State) -> {reply, ok, State}.\n"}
     ].
 
 special_proc_v1() ->
