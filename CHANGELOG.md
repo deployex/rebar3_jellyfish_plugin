@@ -1,5 +1,13 @@
 # CHANGELOG (v0.1.x)
 
+## 0.1.2 🚀 (2026-11-22)
+
+### Backwards incompatible changes for 0.1.1
+ * None
+
+### Bug fixes
+ * [`PULL-8`](https://github.com/deployex/rebar3_jellyfish_plugin/pull/8) Generate soft updates for OTP behaviours without code_change
+
 ## 0.1.1 🚀 (2026-11-21)
 
 ### Backwards incompatible changes for 0.1.0
