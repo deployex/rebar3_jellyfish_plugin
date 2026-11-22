@@ -124,8 +124,11 @@ generate_instruction(changed, {V1File, V2File}) ->
     Imports = beam_imports(V2File),
     IsSupervisor = is_supervisor(Attributes),
     IsSpecialProcess = is_special_process(Exports),
+    IsOtpCallbackProcess = is_otp_callback_process(Attributes),
     DependsOn = depended_modules(Imports),
-    generate_instruction_advanced(ModuleName, IsSupervisor, IsSpecialProcess, DependsOn).
+    generate_instruction_advanced(
+        ModuleName, IsSupervisor, IsSpecialProcess, IsOtpCallbackProcess, DependsOn
+    ).
 
 depended_modules(Imports) ->
     lists:reverse(
@@ -158,6 +161,16 @@ is_special_process(Exports) ->
         lists:member({code_change, 3}, Exports) orelse
         lists:member({code_change, 4}, Exports).
 
+%% These behaviours run as OTP-managed callback processes. Even without a
+%% state migration callback, they must be suspended and resumed around the
+%% code replacement; loading their module directly can purge code while a
+%% callback (for example, a blocking accept loop) is still executing it.
+is_otp_callback_process(Attributes) ->
+    Behaviours =
+        proplists:get_value(behavior, Attributes, []) ++
+            proplists:get_value(behaviour, Attributes, []),
+    lists:any(fun(B) -> lists:member(B, Behaviours) end, [gen_server, gen_statem, gen_fsm]).
+
 is_supervisor(Attributes) ->
     Behaviours =
         proplists:get_value(behavior, Attributes, []) ++
@@ -175,17 +188,23 @@ is_supervisor(Attributes) ->
 % needs a hand-added {apply, {supervisor, start_child/terminate_child/
 % delete_child, [...]}} instruction - see the README's "Known Limitations"
 % section and use EDIT_APPUP to add it.
-generate_instruction_advanced(M, true, _IsSpecial, _DepMods) ->
+generate_instruction_advanced(M, true, _IsSpecial, _IsOtpProc, _DepMods) ->
     {update, M, supervisor};
 % special process (i.e. exports code_change/3 or system_code_change/4)
-generate_instruction_advanced(M, false, true, []) ->
+generate_instruction_advanced(M, false, true, _IsOtpProc, []) ->
     {update, M, {advanced, []}};
-generate_instruction_advanced(M, false, true, DepMods) ->
+generate_instruction_advanced(M, false, true, _IsOtpProc, DepMods) ->
     {update, M, {advanced, []}, DepMods};
-% non-special process (i.e. neither code_change/3 nor system_code_change/4 are exported)
-generate_instruction_advanced(M, false, false, []) ->
+% OTP callback process without a migration callback: synchronize the process
+% with a soft update, but do not call code_change.
+generate_instruction_advanced(M, false, false, true, []) ->
+    {update, M, soft, []};
+generate_instruction_advanced(M, false, false, true, DepMods) ->
+    {update, M, soft, DepMods};
+% Ordinary module (not an OTP callback process).
+generate_instruction_advanced(M, false, false, false, []) ->
     {load_module, M};
-generate_instruction_advanced(M, false, false, DepMods) ->
+generate_instruction_advanced(M, false, false, false, DepMods) ->
     {load_module, M, DepMods}.
 
 module_name(File) ->

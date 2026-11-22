@@ -35,6 +35,16 @@ changed_and_added_module_test() ->
 % still produce an `advanced` update instruction. The decision has to be
 % based on the NEW beam's exports, not the old one, or this migration code
 % would silently never run on a module that didn't need code_change before.
+otp_behaviour_without_code_change_uses_soft_update_test() ->
+    V1 = build_fixture("0.1.0", fun soft_worker_v1/0),
+    V2 = build_fixture("0.2.0", fun soft_worker_v2/0),
+
+    {ok, {"0.2.0", [{"0.1.0", Up}], [{"0.1.0", Down}]}} =
+        jellyfish_appup:make(fixture_app, "0.1.0", "0.2.0", V1, V2),
+
+    ?assertEqual([{update, jf_fixture_soft_worker, soft, []}], Up),
+    ?assertEqual([{update, jf_fixture_soft_worker, soft, []}], Down).
+
 code_change_added_only_in_new_version_test() ->
     V1 = build_fixture("0.1.0", fun special_proc_v1/0),
     V2 = build_fixture("0.2.0", fun special_proc_v2/0),
@@ -254,6 +264,26 @@ worker_plus_doomed_v1() ->
                 "-export([ping/0]).\n"
                 "ping() -> pong.\n"}
         ].
+
+soft_worker_v1() ->
+    [
+        {jf_fixture_soft_worker,
+            "-module(jf_fixture_soft_worker).\n"
+            "-behaviour(gen_server).\n"
+            "-export([init/1, handle_call/3]).\n"
+            "init(_Args) -> {ok, v1}.\n"
+            "handle_call(_Req, _From, State) -> {reply, ok, State}.\n"}
+    ].
+
+soft_worker_v2() ->
+    [
+        {jf_fixture_soft_worker,
+            "-module(jf_fixture_soft_worker).\n"
+            "-behaviour(gen_server).\n"
+            "-export([init/1, handle_call/3]).\n"
+            "init(_Args) -> {ok, v2}.\n"
+            "handle_call(_Req, _From, State) -> {reply, ok, State}.\n"}
+    ].
 
 special_proc_v1() ->
     [
