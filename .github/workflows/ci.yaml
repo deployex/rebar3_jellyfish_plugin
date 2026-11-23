@@ -64,5 +64,5 @@ jobs:
           git config --global user.email "ci@example.com"
           git config --global user.name "ci"
 
-      - name: Build single-app and umbrella releases through the plugin and inspect the tarball
+      - name: Build single-app, umbrella and transitive-dependency releases through the plugin and inspect the tarball
         run: bash test/integration/run.sh

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds two tiny rebar3 projects (a plain app and a two-app umbrella) with
+# Builds three tiny rebar3 projects (a plain app, a two-app umbrella and an
+# app whose dependency brings in another library) with
 # rebar3_jellyfish_plugin wired in, through a real v1 -> code change -> v2
 # release cycle, and inspects the resulting .tar.gz: does the appup and
 # jellyfish.json actually land where DeployEx expects them, with the right
@@ -194,6 +195,94 @@ EOF
 }
 
 # ===================================================================
+# Scenario 3: a dependency of a dependency changes version
+# ===================================================================
+# The project declares only lib_direct, which brings in lib_transitive.
+# lib_transitive is the only library that moves between the two releases,
+# so its appup has to come from the resolved dependency tree, not from the
+# deps the project declares. Both libraries are local git repos, so the
+# scenario needs no network access. The release includes sasl because a
+# relup cannot be built for a release without it.
+run_transitive_dependency_scenario() {
+    local snapshot_dir="$1"
+    local proj="$WORKDIR/dep_app"
+    local direct="$WORKDIR/lib_direct"
+    local transitive="$WORKDIR/lib_transitive"
+    mkdir -p "$proj/src" "$direct/src" "$transitive/src"
+
+    write_lib "$transitive" lib_transitive 1.0.0 "kernel, stdlib" 1
+    echo '{erl_opts, [debug_info]}.' >"$transitive/rebar.config"
+    commit_lib "$transitive" "lib_transitive 1.0.0"
+
+    write_lib "$direct" lib_direct 1.0.0 "kernel, stdlib, lib_transitive" 1
+    cat >"$direct/rebar.config" <<EOF
+{erl_opts, [debug_info]}.
+{deps, [{lib_transitive, {git, "file://${transitive}", {branch, "main"}}}]}.
+EOF
+    commit_lib "$direct" "lib_direct 1.0.0"
+
+    {
+        plugin_rebar_config_stanza "$snapshot_dir"
+        cat <<EOF
+{erl_opts, [debug_info]}.
+{deps, [{lib_direct, {git, "file://${direct}", {branch, "main"}}}]}.
+{relx, [{release, {dep_app, "0.1.0"}, [dep_app, sasl]},
+        {dev_mode, false},
+        {include_erts, false},
+        {extended_start_script, true},
+        {overlay, [{copy, "rel/appups/lib", "lib"}]}]}.
+EOF
+    } >"$proj/rebar.config"
+
+    write_app_src "$proj" dep_app 0.1.0
+    sed -i.bak 's/{applications, \[kernel, stdlib\]}/{applications, [kernel, stdlib, lib_direct]}/' \
+        "$proj/src/dep_app.app.src"
+    rm -f "$proj/src/dep_app.app.src.bak"
+    write_worker "$proj" 1
+
+    log "--- transitive dependency: building v0.1.0 (lib_transitive 1.0.0) ---"
+    build "$proj"
+    local rel="$proj/_build/default/rel/dep_app"
+    assert_file "$rel/lib/lib_transitive-1.0.0/ebin/lib_transitive.app"
+    assert_no_file "$rel/lib/lib_transitive-1.0.0/ebin/jellyfish.json"
+
+    write_lib "$transitive" lib_transitive 1.1.0 "kernel, stdlib" 2
+    commit_lib "$transitive" "lib_transitive 1.1.0"
+
+    if (cd "$proj" && rebar3 upgrade --all >"$proj/upgrade.log" 2>&1); then
+        ok "upgraded the dependencies of dep_app"
+    else
+        bad "rebar3 upgrade failed in $proj, see $proj/upgrade.log"
+        tail -20 "$proj/upgrade.log" || true
+    fi
+
+    sed -i.bak 's/0\.1\.0/0.1.1/' "$proj/rebar.config" "$proj/src/dep_app.app.src"
+    rm -f "$proj/rebar.config.bak" "$proj/src/dep_app.app.src.bak"
+    write_worker "$proj" 2
+
+    log "--- transitive dependency: building v0.1.1 (lib_transitive 1.1.0) ---"
+    build "$proj"
+
+    local tarball="$rel/dep_app-0.1.1.tar.gz"
+    assert_file "$tarball"
+
+    local extract="$WORKDIR/dep_app_extract"
+    mkdir -p "$extract"
+    tar -xzf "$tarball" -C "$extract"
+
+    assert_file "$extract/lib/lib_transitive-1.1.0/ebin/lib_transitive.appup"
+    assert_file "$extract/lib/lib_transitive-1.1.0/ebin/jellyfish.json"
+    check_jellyfish_json "$extract/lib/lib_transitive-1.1.0/ebin/jellyfish.json" lib_transitive dependency 1.0.0 1.1.0
+    check_appup "$extract/lib/lib_transitive-1.1.0/ebin/lib_transitive.appup" 1.1.0 1.0.0
+
+    # lib_direct did not change, so it must not get an appup or jellyfish.json.
+    assert_no_file "$extract/lib/lib_direct-1.0.0/ebin/lib_direct.appup"
+    assert_no_file "$extract/lib/lib_direct-1.0.0/ebin/jellyfish.json"
+
+    check_relup "$rel" dep_app 0.1.1 0.1.0
+}
+
+# ===================================================================
 # Fixture writers
 # ===================================================================
 
@@ -236,6 +325,34 @@ code_change(_OldVsn, State, _Extra) -> {ok, State + ${revision}}.
 EOF
 }
 
+# A library with no processes of its own: one module whose return value
+# changes with the revision, so its beam differs between two versions.
+write_lib() {
+    local dir="$1" app="$2" vsn="$3" applications="$4" revision="$5"
+    cat >"$dir/src/${app}.app.src" <<EOF
+{application, ${app},
+ [{description, "integration test library"},
+  {vsn, "${vsn}"},
+  {registered, []},
+  {applications, [${applications}]},
+  {env, []},
+  {modules, []}
+ ]}.
+EOF
+    cat >"$dir/src/${app}.erl" <<EOF
+-module(${app}).
+-export([revision/0]).
+revision() -> ${revision}.
+EOF
+}
+
+commit_lib() {
+    local dir="$1" message="$2"
+    [ -d "$dir/.git" ] || git -C "$dir" init -q -b main
+    git -C "$dir" add -A
+    git -C "$dir" -c user.email=ci@example.com -c user.name=ci commit -q -m "$message"
+}
+
 # ===================================================================
 # Content checks
 # ===================================================================
@@ -276,6 +393,26 @@ check_appup() {
         || bad "$path did not parse as the expected appup shape"
 }
 
+# What DeployEx does on the host: build the relup from the appups of every
+# application whose version changed. It fails when one of them has none.
+check_relup() {
+    local rel="$1" name="$2" to="$3" from="$4"
+    (cd "$rel" && erl -noshell -eval "
+        case systools:make_relup(\"releases/$to/$name\", [\"releases/$from/$name\"], [\"releases/$from/$name\"],
+                                 [{path, [\"lib/*/ebin\"]}, noexec, silent]) of
+            {ok, _Relup, _Module, _Warnings} ->
+                halt(0);
+            {error, Module, Error} ->
+                io:format(\"~s~n\", [Module:format_error(Error)]),
+                halt(1);
+            Other ->
+                io:format(\"unexpected make_relup result: ~p~n\", [Other]),
+                halt(1)
+        end
+    ") && ok "a relup can be built from $name $from to $to" \
+        || bad "no relup could be built from $name $from to $to"
+}
+
 # ===================================================================
 # Main
 # ===================================================================
@@ -285,6 +422,7 @@ SNAPSHOT_DIR="$(snapshot_plugin)"
 
 run_single_app_scenario "$SNAPSHOT_DIR"
 run_umbrella_scenario "$SNAPSHOT_DIR"
+run_transitive_dependency_scenario "$SNAPSHOT_DIR"
 
 log ""
 log "Results: $PASS passed, $FAIL failed"
