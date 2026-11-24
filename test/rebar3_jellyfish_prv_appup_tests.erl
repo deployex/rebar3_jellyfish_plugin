@@ -22,14 +22,66 @@ major_version_dominates_test() ->
     ?assert(rebar3_jellyfish_prv_appup:compare_versions("2.0.0", "1.9.9")),
     ?assertNot(rebar3_jellyfish_prv_appup:compare_versions("1.9.9", "2.0.0")).
 
-unparseable_version_falls_back_without_crashing_test() ->
-    % A pre-release suffix like "-rc1" doesn't parse as a plain dotted
-    % integer version; this must degrade to *some* deterministic answer
-    % rather than raise, even though the ordering it produces for mixed
-    % parseable/unparseable versions isn't meaningful semver ordering.
-    ?assert(is_boolean(rebar3_jellyfish_prv_appup:compare_versions("1.0.0-rc1", "1.0.0"))),
-    ?assert(is_boolean(rebar3_jellyfish_prv_appup:compare_versions("1.0.0", "1.0.0-rc1"))),
-    ?assert(is_boolean(rebar3_jellyfish_prv_appup:compare_versions("1.0.0-rc1", "1.0.0-rc2"))).
+%% The order has to be the one Jellyfish uses, so that a project built with
+%% either tool diffs against the same previous version.
+
+pre_release_is_lower_than_its_release_test() ->
+    ?assert(higher("1.0.0", "1.0.0-rc1")),
+    ?assert(higher("1.0.0-rc2", "1.0.0-rc1")),
+    ?assert(higher("1.0.1-rc1", "1.0.0")),
+    % Numeric identifiers compare as numbers, and are lower than text ones
+    ?assert(higher("1.0.0-rc.10", "1.0.0-rc.9")),
+    ?assert(higher("1.0.0-alpha", "1.0.0-1")),
+    % A shorter list of identifiers is lower than a longer one it starts
+    ?assert(higher("1.0.0-rc.1", "1.0.0-rc")).
+
+numeric_parts_decide_before_the_suffix_test() ->
+    % As text, "0.10.0-x" is lower than "0.9.0-x"
+    ?assert(higher("0.10.0-9cad9cd", "0.9.0-f00dfee")),
+    ?assert(higher("0.10.0-rc1", "0.9.0")).
+
+any_number_of_numeric_parts_test() ->
+    ?assert(higher("1.10", "1.9")),
+    ?assert(higher("1.2.3.10", "1.2.3.9")),
+    ?assert(same("1.2", "1.2.0")).
+
+build_metadata_is_ignored_test() ->
+    ?assert(same("1.0.0+abc", "1.0.0")),
+    ?assert(same("1.0.0+abc", "1.0.0+def")),
+    ?assert(higher("1.0.1+abc", "1.0.0+def")).
+
+git_describe_is_higher_than_its_release_test() ->
+    ?assert(higher("1.0.0-4-gabc1234", "1.0.0")),
+    ?assert(higher("1.0.0-10-gabc1234", "1.0.0-9-gfff0000")),
+    ?assert(higher("1.0.1", "1.0.0-4-gabc1234")),
+    % The commit and not the count is what differs here
+    ?assert(same("1.0.0-4-gabc1234", "1.0.0-4-gfff0000")).
+
+a_build_identifier_orders_as_text_test() ->
+    % Two builds of one version: the text decides, not when they were built
+    ?assert(higher("0.1.0-f00dfee", "0.1.0-9cad9cd")).
+
+unparseable_version_is_lower_and_does_not_crash_test() ->
+    ?assert(higher("0.0.1", "main")),
+    ?assert(higher("0.0.1-rc1", "main")),
+    ?assert(higher("main", "develop")),
+    ?assert(same("main", "main")),
+    [
+        ?assert(is_boolean(rebar3_jellyfish_prv_appup:compare_versions(A, B)))
+     || A <- odd_versions(), B <- odd_versions()
+    ].
+
+odd_versions() ->
+    ["", "1..2", "1.0.0-", "1.0.0-rc..1", "-rc1", "1.0.0-a-b", "v1.0.0", "1.0.0+"].
+
+%% compare_versions/2 is "A is not lower than B"
+higher(A, B) ->
+    rebar3_jellyfish_prv_appup:compare_versions(A, B) andalso
+        not rebar3_jellyfish_prv_appup:compare_versions(B, A).
+
+same(A, B) ->
+    rebar3_jellyfish_prv_appup:compare_versions(A, B) andalso
+        rebar3_jellyfish_prv_appup:compare_versions(B, A).
 
 %% ===================================================================
 %% previous_version/3 - scans a release dir's `lib/<app>-*` entries and
@@ -44,6 +96,8 @@ setup_rel_dir() ->
     write_app_dir(RelDir, "myapp", "0.1.0"),
     write_app_dir(RelDir, "myapp", "0.2.0"),
     write_app_dir(RelDir, "myapp", "0.1.5"),
+    write_app_dir(RelDir, "myapp", "0.2.0-rc1"),
+    write_app_dir(RelDir, "myapp", "0.10.0-9cad9cd"),
     RelDir.
 
 cleanup(RelDir) ->
@@ -52,15 +106,17 @@ cleanup(RelDir) ->
 previous_version_cases(RelDir) ->
     [
         ?_assertEqual(
-            {"0.2.0", filename:join(RelDir, "lib/myapp-0.2.0")},
-            rebar3_jellyfish_prv_appup:previous_version(RelDir, "myapp", "0.3.0")
+            % Higher than 0.2.0 as a number, lower as text
+            {"0.10.0-9cad9cd", filename:join(RelDir, "lib/myapp-0.10.0-9cad9cd")},
+            rebar3_jellyfish_prv_appup:previous_version(RelDir, "myapp", "0.11.0")
         ),
         ?_assertEqual(
             % The current version itself must be excluded even though it's
             % the highest one on disk - otherwise a no-op "upgrade" from a
-            % version to itself could be generated.
-            {"0.1.5", filename:join(RelDir, "lib/myapp-0.1.5")},
-            rebar3_jellyfish_prv_appup:previous_version(RelDir, "myapp", "0.2.0")
+            % version to itself could be generated. 0.2.0 is the next one
+            % down, above its own release candidate.
+            {"0.2.0", filename:join(RelDir, "lib/myapp-0.2.0")},
+            rebar3_jellyfish_prv_appup:previous_version(RelDir, "myapp", "0.10.0-9cad9cd")
         ),
         ?_assertEqual(
             none,
