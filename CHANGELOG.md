@@ -1,5 +1,13 @@
 # CHANGELOG (v0.1.x)
 
+## 0.1.5 🚀 (2026-11-24)
+
+### Backwards incompatible changes for 0.1.4
+ * None
+
+### Enhancements
+ * [`PULL-14`](https://github.com/deployex/rebar3_jellyfish_plugin/pull/14) Use an appup written by hand, kept in `rel/appup_overrides`, in place of the generated one
+
 ## 0.1.4 🚀 (2026-11-24)
 
 ### Backwards incompatible changes for 0.1.3
