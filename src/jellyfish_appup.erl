@@ -73,10 +73,13 @@ make_appup(V1, V1Path, V2, V2Path) ->
 
     {Deleted, Added, Changed} = beam_lib:cmp_dirs(V1Ebin, V2Ebin),
 
-    % Some compilers (e.g. Elixir's) always show a changed Dbgi chunk even
-    % when nothing meaningful changed, since it embeds compiler-run-specific
-    % state. Filtering that out here keeps appups free of no-op instructions
-    % regardless of which compiler produced the beam.
+    % cmp_dirs/2 reports every file whose chunks differ, which says little
+    % about the module: two compiles of one source differ in the debug
+    % information the compiler writes, and a previous version read from a
+    % release that strips its beams ({debug_info, strip} in relx) has fewer
+    % chunks than the freshly compiled one. is_real_change/1 keeps the
+    % modules whose code differs, so the appup has no instruction for one
+    % that would be loaded for nothing.
     ActuallyChanged = lists:filter(fun is_real_change/1, Changed),
 
     UpInstructions =
@@ -91,10 +94,18 @@ make_appup(V1, V1Path, V2, V2Path) ->
 
     {V2, [{V1, UpInstructions}], [{V1, DownInstructions}]}.
 
+%% The MD5 of a beam covers what the module runs - its code, literals,
+%% exports, imports and attributes - and none of the debug information,
+%% documentation or compile information. Jellyfish (the Elixir/Mix library)
+%% compares two versions the same way.
 is_real_change({V1Beam, V2Beam}) ->
-    case beam_lib:cmp(V1Beam, V2Beam) of
-        {error, beam_lib, {chunks_different, "Dbgi"}} -> false;
-        _ -> true
+    code_md5(V1Beam) =/= code_md5(V2Beam).
+
+%% A beam that cannot be read is taken as changed.
+code_md5(Beam) ->
+    case beam_lib:md5(Beam) of
+        {ok, {_Module, MD5}} -> MD5;
+        {error, beam_lib, _Reason} -> make_ref()
     end.
 
 generate_instructions(changed, Files) ->
@@ -108,7 +119,10 @@ generate_instruction(deleted, File) ->
     {delete_module, module_name(File)};
 generate_instruction(changed, {V1File, V2File}) ->
     ModuleName = module_name(V1File),
-    Attributes = beam_attributes(V1File),
+    % Read from the new beam, as the exports below. The previous one can
+    % come from a release that strips its beams, and a stripped beam has no
+    % attributes chunk to read.
+    Attributes = beam_attributes(V2File),
     % Whether code_change/3 (or system_code_change/4) is exported must be
     % checked on the NEW (V2) beam, not the old one. Per OTP's release
     % handler (systools_rc.erl), code_change always runs against whichever

@@ -137,19 +137,43 @@ deleted_module_test() ->
 
 unchanged_module_alongside_a_deletion_test() ->
     V1 = build_fixture("0.1.0", fun worker_plus_doomed_v1/0),
-    V2 = build_fixture("0.2.0", fun() -> [] end),
-    % jf_fixture_worker is meant to be byte-identical in both versions, but
-    % two separate compiles of identical source are not guaranteed to
-    % produce identical beams (e.g. a toolchain embedding build-specific
-    % metadata outside the already-filtered Dbgi chunk) - copying V1's exact
-    % beam into V2 keeps this test about deletion, not compiler determinism.
-    ok = copy_beam(V1, V2, jf_fixture_worker),
+    % jf_fixture_worker is compiled again from the same source. The two
+    % beams are not the same file, and their code is.
+    V2 = build_fixture("0.2.0", fun worker_v1/0),
 
     {ok, {"0.2.0", [{"0.1.0", Up}], [{"0.1.0", Down}]}} =
         jellyfish_appup:make(fixture_app, "0.1.0", "0.2.0", V1, V2),
 
     ?assertEqual([{delete_module, jf_fixture_doomed}], Up),
     ?assertEqual([{add_module, jf_fixture_doomed}], Down).
+
+% The previous version is read from a release. One built with
+% {debug_info, strip} ships beams without their debug information, so they
+% never have the same chunks as the freshly compiled ones: comparing the
+% files would report every module of the application as changed.
+unchanged_module_of_a_stripped_release_test() ->
+    V1 = build_fixture("0.1.0", fun worker_and_plain_v1/0),
+    V2 = build_fixture("0.2.0", fun worker_and_plain_v2/0),
+    ok = strip_beams(V1),
+
+    Same = fun(Dir) -> filename:join([Dir, "ebin", "jf_fixture_worker.beam"]) end,
+    ?assertMatch({error, beam_lib, _}, beam_lib:cmp(Same(V1), Same(V2))),
+
+    {ok, {"0.2.0", [{"0.1.0", Up}], [{"0.1.0", Down}]}} =
+        jellyfish_appup:make(fixture_app, "0.1.0", "0.2.0", V1, V2),
+
+    ?assertEqual([{load_module, jf_fixture_plain, []}], Up),
+    ?assertEqual([{load_module, jf_fixture_plain, []}], Down).
+
+no_instruction_when_only_the_debug_information_differs_test() ->
+    V1 = build_fixture("0.1.0", fun worker_and_plain_v1/0),
+    V2 = build_fixture("0.2.0", fun worker_and_plain_v1/0),
+    ok = strip_beams(V1),
+
+    ?assertEqual(
+        {ok, {"0.2.0", [{"0.1.0", []}], [{"0.1.0", []}]}},
+        jellyfish_appup:make(fixture_app, "0.1.0", "0.2.0", V1, V2)
+    ).
 
 dependency_ordering_test() ->
     V1 = build_fixture("0.1.0", fun two_modules_v1/0),
@@ -401,6 +425,29 @@ mixed_v2() ->
             "-export([ping/0]).\n"
             "ping() -> pong.\n"}
     ].
+
+worker_and_plain_v1() ->
+    worker_v1() ++
+        [
+            {jf_fixture_plain,
+                "-module(jf_fixture_plain).\n"
+                "-export([value/0]).\n"
+                "value() -> v1.\n"}
+        ].
+
+worker_and_plain_v2() ->
+    worker_v1() ++
+        [
+            {jf_fixture_plain,
+                "-module(jf_fixture_plain).\n"
+                "-export([value/0]).\n"
+                "value() -> v2.\n"}
+        ].
+
+%% What relx does to the beams of a release with {debug_info, strip}.
+strip_beams(Dir) ->
+    {ok, _Stripped} = beam_lib:strip_files(filelib:wildcard(filename:join([Dir, "ebin", "*.beam"]))),
+    ok.
 
 copy_beam(FromDir, ToDir, Module) ->
     FromFile = filename:join([FromDir, "ebin", atom_to_list(Module) ++ ".beam"]),
