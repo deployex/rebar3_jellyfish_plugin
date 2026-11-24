@@ -4,6 +4,10 @@
 %% `rel/appups/lib/<app>-<vsn>/ebin/', mirroring a release's own `lib/'
 %% layout.
 %%
+%% An appup written by hand, kept at
+%% `rel/appup_overrides/<app>/<from>_to_<to>.appup', is used as it is in
+%% place of the generated one, see jellyfish_override.
+%%
 %% relx config can't be changed reliably at this point - by the time this
 %% provider runs, relx has already parsed its own config - so getting those
 %% files into the actual release relies on a static overlay rule the
@@ -74,10 +78,18 @@ do(State) ->
 
     case process_apps(Apps, RelDir, RootDir) of
         ok -> {ok, State};
-        {error, Reason} -> {error, {?MODULE, Reason}}
+        {error, Reason} ->
+            % rebar3 prints the error of a provider run as a hook as a raw
+            % term and never asks for its text, so it is said here
+            rebar_api:error("~s", [format_error(Reason)]),
+            {error, {?MODULE, Reason}}
     end.
 
 -spec format_error(term()) -> iolist().
+format_error({appup_failed, App, {invalid_override, _Path, _Reason} = Invalid}) ->
+    io_lib:format("jellyfish: failed to generate appup for ~s: ~s", [
+        App, jellyfish_override:format_error(Invalid)
+    ]);
 format_error({appup_failed, App, Reason}) ->
     io_lib:format("jellyfish: failed to generate appup for ~s: ~p", [App, Reason]);
 format_error(Reason) ->
@@ -122,28 +134,49 @@ process_apps([{NameBin, Type, Vsn, AppDir} | Rest], RelDir, RootDir) ->
             end
     end.
 
+%% An appup written by hand for this upgrade is used as it is, see
+%% jellyfish_override.
 generate(App, AppStr, Type, V2, V2Path, V1, V1Path, RootDir) ->
-    case jellyfish_appup:make(App, V1, V2, V1Path, V2Path) of
-        {ok, Appup} ->
-            EbinDir = filename:join([RootDir, "rel", "appups", "lib", AppStr ++ "-" ++ V2, "ebin"]),
-            ok = filelib:ensure_dir(filename:join(EbinDir, "x")),
-
-            AppupPath = filename:join(EbinDir, AppStr ++ ".appup"),
-            ok = file:write_file(AppupPath, io_lib:format("~p.~n", [Appup])),
-
-            JellyfishPath = filename:join(EbinDir, "jellyfish.json"),
-            ok = jellyfish_json:write(JellyfishPath, App, Type, V1, V2),
-
-            maybe_pause_for_edit(AppupPath),
-
-            rebar_api:info("jellyfish: [~s] versions: [~s, ~s] - appup: ~s", [
-                AppStr, V1, V2, AppupPath
-            ]),
-
-            ok;
+    case jellyfish_override:find(RootDir, AppStr, V1, V2) of
+        {ok, Override} ->
+            write(App, AppStr, Type, V1, V2, RootDir, {override, Override});
+        none ->
+            case jellyfish_appup:make(App, V1, V2, V1Path, V2Path) of
+                {ok, Appup} -> write(App, AppStr, Type, V1, V2, RootDir, {generated, Appup});
+                {error, _} = Err -> Err
+            end;
         {error, _} = Err ->
             Err
     end.
+
+write(App, AppStr, Type, V1, V2, RootDir, Source) ->
+    EbinDir = filename:join([RootDir, "rel", "appups", "lib", AppStr ++ "-" ++ V2, "ebin"]),
+    ok = filelib:ensure_dir(filename:join(EbinDir, "x")),
+
+    AppupPath = filename:join(EbinDir, AppStr ++ ".appup"),
+    ok = write_appup(AppupPath, Source),
+
+    JellyfishPath = filename:join(EbinDir, "jellyfish.json"),
+    ok = jellyfish_json:write(JellyfishPath, App, Type, V1, V2),
+
+    maybe_pause_for_edit(AppupPath),
+
+    rebar_api:info("jellyfish: [~s] versions: [~s, ~s] - appup: ~s~s", [
+        AppStr, V1, V2, AppupPath, override_note(Source)
+    ]),
+
+    ok.
+
+write_appup(Path, {generated, Appup}) ->
+    file:write_file(Path, io_lib:format("~p.~n", [Appup]));
+%% Copied and not written again, so the comments that say why it was written
+%% by hand reach the release.
+write_appup(Path, {override, Override}) ->
+    {ok, _Bytes} = file:copy(Override, Path),
+    ok.
+
+override_note({override, Override}) -> [", from the override ", Override];
+override_note({generated, _Appup}) -> "".
 
 maybe_pause_for_edit(AppupPath) ->
     case os:getenv("EDIT_APPUP") of
