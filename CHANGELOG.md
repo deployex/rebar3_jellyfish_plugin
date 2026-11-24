@@ -1,5 +1,16 @@
 # CHANGELOG (v0.1.x)
 
+## 0.1.3 🚀 (2026-11-24)
+
+### Backwards incompatible changes for 0.1.2
+ * None
+
+### Bug fixes
+ * [`PULL-10`](https://github.com/deployex/rebar3_jellyfish_plugin/pull/10) Pick the previous version in the same order as Jellyfish
+
+### Enhancements
+ * [`PULL-9`](https://github.com/deployex/rebar3_jellyfish_plugin/pull/9) Cover a transitive dependency in the integration test
+
 ## 0.1.2 🚀 (2026-11-22)
 
 ### Backwards incompatible changes for 0.1.1
