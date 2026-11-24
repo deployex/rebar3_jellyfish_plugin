@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds three tiny rebar3 projects (a plain app, a two-app umbrella and an
-# app whose dependency brings in another library) with
+# Builds four tiny rebar3 projects (a plain app, a two-app umbrella, an app
+# whose dependency brings in another library and an app with an appup
+# written by hand) with
 # rebar3_jellyfish_plugin wired in, through a real v1 -> code change -> v2
 # release cycle, and inspects the resulting .tar.gz: does the appup and
 # jellyfish.json actually land where DeployEx expects them, with the right
@@ -283,6 +284,98 @@ EOF
 }
 
 # ===================================================================
+# Scenario 4: an appup written by hand for the upgrade
+# ===================================================================
+# The same change as the single app, with an override kept in the project
+# for exactly that upgrade: the release has to carry the file as it was
+# written, and a file that is not usable has to fail the build.
+run_override_scenario() {
+    local snapshot_dir="$1"
+    local proj="$WORKDIR/override_app"
+    mkdir -p "$proj/src"
+
+    {
+        plugin_rebar_config_stanza "$snapshot_dir"
+        cat <<'EOF'
+{erl_opts, [debug_info]}.
+{deps, []}.
+{relx, [{release, {override_app, "0.1.0"}, [override_app]},
+        {dev_mode, false},
+        {include_erts, false},
+        {extended_start_script, true},
+        {overlay, [{copy, "rel/appups/lib", "lib"}]}]}.
+EOF
+    } >"$proj/rebar.config"
+
+    write_app_src "$proj" override_app 0.1.0
+    write_worker "$proj" 1
+
+    log "--- override: building v0.1.0 (no previous version yet) ---"
+    build "$proj"
+
+    sed -i.bak 's/0\.1\.0/0.1.1/' "$proj/rebar.config" "$proj/src/override_app.app.src"
+    rm -f "$proj/rebar.config.bak" "$proj/src/override_app.app.src.bak"
+    write_worker "$proj" 2
+
+    local override="$proj/rel/appup_overrides/override_app/0.1.0_to_0.1.1.appup"
+    mkdir -p "$(dirname "$override")"
+
+    # The override of another upgrade, which this one has to ignore
+    cat >"$proj/rel/appup_overrides/override_app/0.0.9_to_0.1.0.appup" <<'EOF'
+{"0.1.0", [{"0.0.9", [{restart_application, override_app}]}], [{"0.0.9", []}]}.
+EOF
+
+    log "--- override: building v0.1.1 with an override that has no downgrade ---"
+    cat >"$override" <<'EOF'
+{"0.1.1", [{"0.1.0", [{load_module, override_app_worker}]}], []}.
+EOF
+    if (cd "$proj" && rebar3 tar >"$proj/build.log" 2>&1); then
+        bad "the build passed with an override that is not usable"
+    else
+        ok "the build failed with an override that is not usable"
+    fi
+    if grep -q "is not for the versions of its name" "$proj/build.log"; then
+        ok "the build says why the override was refused"
+    else
+        bad "the build does not say why the override was refused"
+        tail -20 "$proj/build.log" || true
+    fi
+
+    log "--- override: building v0.1.1 with the override of this upgrade ---"
+    cat >"$override" <<'EOF'
+%% The worker cannot be updated in place for this upgrade: it is stopped
+%% through its application, the code is loaded and it is started again.
+{"0.1.1",
+ [{"0.1.0", [{restart_application, override_app}]}],
+ [{"0.1.0", [{restart_application, override_app}]}]}.
+EOF
+    build "$proj"
+
+    if grep -q "from the override .*0.1.0_to_0.1.1.appup" "$proj/build.log"; then
+        ok "the build says the appup came from the override"
+    else
+        bad "the build does not say the appup came from the override"
+    fi
+
+    local extract="$WORKDIR/override_app_extract"
+    mkdir -p "$extract"
+    tar -xzf "$proj/_build/default/rel/override_app/override_app-0.1.1.tar.gz" -C "$extract"
+
+    local appup="$extract/lib/override_app-0.1.1/ebin/override_app.appup"
+    assert_file "$appup"
+
+    # With its comments, which say why it was written
+    if cmp -s "$override" "$appup"; then
+        ok "the appup of the release is the override, as it was written"
+    else
+        bad "the appup of the release is not the override: $(cat "$appup")"
+    fi
+
+    check_jellyfish_json "$extract/lib/override_app-0.1.1/ebin/jellyfish.json" override_app project 0.1.0 0.1.1
+    check_appup "$appup" 0.1.1 0.1.0
+}
+
+# ===================================================================
 # Fixture writers
 # ===================================================================
 
@@ -423,6 +516,7 @@ SNAPSHOT_DIR="$(snapshot_plugin)"
 run_single_app_scenario "$SNAPSHOT_DIR"
 run_umbrella_scenario "$SNAPSHOT_DIR"
 run_transitive_dependency_scenario "$SNAPSHOT_DIR"
+run_override_scenario "$SNAPSHOT_DIR"
 
 log ""
 log "Results: $PASS passed, $FAIL failed"

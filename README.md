@@ -85,7 +85,52 @@ An appup upgrades from one previous version, the highest one found in the releas
 
 ## Appup file
 
-If for any reason you need to change the order of the modules or add new instructions to the generated appup file, set the `EDIT_APPUP` environment variable before building the release:
+The plugin writes an appup from what changed in the compiled modules.
+It cannot see what a release changes around them: a process that exists in one version and not in the other, a supervisor whose children changed, a different shape of the data that processes share.
+An upgrade like that needs other instructions, and there are two ways to give them.
+
+### An override in the repository
+
+Write the appup by hand, and keep it where the plugin looks for one, under the root of the project:
+
+```
+rel/appup_overrides/<application>/<from>_to_<to>.appup
+```
+
+When the release is built for exactly that upgrade of that application, the file is used as it is, comments included, and nothing is generated for it.
+
+```erlang
+%% rel/appup_overrides/my_app/0.1.0_to_0.1.1.appup
+%%
+%% 0.1.1 adds a worker to my_app_sup. The supervisor is updated, which adds
+%% the child specification, and the child is then started by hand.
+{"0.1.1",
+ [{"0.1.0",
+   [{add_module, my_app_cache},
+    {update, my_app_sup, supervisor},
+    {apply, {supervisor, restart_child, [my_app_sup, my_app_cache]}}]}],
+ [{"0.1.0",
+   [{apply, {supervisor, terminate_child, [my_app_sup, my_app_cache]}},
+    {apply, {supervisor, delete_child, [my_app_sup, my_app_cache]}},
+    {update, my_app_sup, supervisor},
+    {delete_module, my_app_cache}]}]}.
+```
+
+ * **It is reviewed as code is.** The file is committed, so the instructions and the reasons for them go through a pull request, and a pipeline builds the same release every time. Start from the appup the plugin generated, in `rel/appups/lib/<application>-<version>/ebin/`.
+ * **It only applies to the upgrade its name says.** Any other pair of versions ignores it, so it can stay in the repository after it has served.
+ * **It works for a dependency as for your own application**, which is where it is needed most: the dependency is not yours to change.
+ * **A file that is not usable fails the build.** The file holds one appup term, with one upgrade and one downgrade, both for the previous version its name says. One that cannot be read, or that is for other versions, is an error, and not a silent return to the generated appup that the override was written to avoid.
+ * **The path and the name are the ones [Jellyfish](https://github.com/deployex/jellyfish) uses**, so a team with Elixir and Erlang services keeps one convention.
+
+The build says which appups came from an override:
+
+```
+===> jellyfish: [my_app] versions: [0.1.0, 0.1.1] - appup: /build/my_app/rel/appups/lib/my_app-0.1.1/ebin/my_app.appup, from the override /build/my_app/rel/appup_overrides/my_app/0.1.0_to_0.1.1.appup
+```
+
+### Editing during the build
+
+Set the `EDIT_APPUP` environment variable before building the release:
 
 ```bash
 EDIT_APPUP=true rebar3 tar
@@ -93,6 +138,7 @@ EDIT_APPUP=true rebar3 tar
 
 The build will pause right after generating each appup, with its path printed, so you can edit it before it's copied into the release.
 Since the hook runs on every `compile`, only set `EDIT_APPUP` for the specific command that builds the release you're about to edit - leaving it set would pause every ordinary `rebar3 compile` or `rebar3 eunit` run too, not just packaging ones.
+It suits a release built by hand. A pipeline cannot answer it, and the edit is not kept anywhere.
 
 ## Relup file
 
@@ -134,7 +180,7 @@ This instruction lets the release handler pick up changes to an existing child's
 Per the [Erlang appup cookbook](https://www.erlang.org/doc/system/appup_cookbook.html), a new child specification is added automatically, but the matching child process is not started, and a removed child's process is not stopped.
 So if a release adds or removes a supervisor's child, the generated appup alone will not start or stop that process.
 The upgrade will look successful while quietly leaving a new worker un-started, or a removed one still running.
-Use `EDIT_APPUP=true rebar3 tar` to add the missing `{apply, {supervisor, start_child, [...]}}`, `{apply, {supervisor, terminate_child, [...]}}`, or `{apply, {supervisor, delete_child, [...]}}` instructions by hand whenever a release changes a supervisor's children, not just its properties.
+Use [an override](#an-override-in-the-repository), or `EDIT_APPUP=true rebar3 tar`, to add the missing `{apply, {supervisor, start_child, [...]}}`, `{apply, {supervisor, terminate_child, [...]}}`, or `{apply, {supervisor, delete_child, [...]}}` instructions by hand whenever a release changes a supervisor's children, not just its properties.
 
 ### NIFs and non-OTP processes
 
@@ -143,7 +189,7 @@ Per the [appup file format reference](https://www.erlang.org/doc/apps/sasl/appup
 `brutal_purge` kills any process still executing old code at purge time instead of waiting for it to finish.
 That's safe for a `gen_server`, `gen_statem`, or supervisor, since the standard upgrade protocol suspends and resumes those processes around the code swap, so none of them are still running old code by the time the purge happens.
 It's not safe for a process that doesn't go through that suspend/resume protocol, such as a plain `spawn_link` loop or a process blocked inside a NIF call, since that process can still be executing old code when the purge runs and gets killed outright.
-If a release touches a NIF-loaded module or a hand-rolled, non-OTP process, review whether `brutal_purge` is appropriate before shipping the upgrade, and use `EDIT_APPUP=true rebar3 tar` to switch the relevant instruction to `soft_purge` if it isn't.
+If a release touches a NIF-loaded module or a hand-rolled, non-OTP process, review whether `brutal_purge` is appropriate before shipping the upgrade, and use [an override](#an-override-in-the-repository), or `EDIT_APPUP=true rebar3 tar`, to switch the relevant instruction to `soft_purge` if it isn't.
 
 ## Development
 
