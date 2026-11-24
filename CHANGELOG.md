@@ -1,5 +1,13 @@
 # CHANGELOG (v0.1.x)
 
+## 0.1.4 🚀 (2026-11-24)
+
+### Backwards incompatible changes for 0.1.3
+ * None
+
+### Bug fixes
+ * [`PULL-12`](https://github.com/deployex/rebar3_jellyfish_plugin/pull/12) Leave modules whose code did not change out of the appup, and generate it from a release that strips its beams
+
 ## 0.1.3 🚀 (2026-11-24)
 
 ### Backwards incompatible changes for 0.1.2
