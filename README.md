@@ -32,7 +32,7 @@ Add the plugin to `rebar.config`, hook it after `compile`, and add one static ov
 
 ```erlang
 {project_plugins, [
-    {rebar3_jellyfish_plugin, "0.1.0"}
+    {rebar3_jellyfish_plugin, "0.1.3"}
 ]}.
 
 {provider_hooks, [
