@@ -201,16 +201,71 @@ app_vsn(Dir, App) ->
             {error, Reason}
     end.
 
-%% Highest version first. A dependency-free, best-effort comparator: splits
-%% each version on "." and compares the parts numerically where possible,
-%% falling back to a raw string compare for anything that doesn't parse
-%% (e.g. a pre-release suffix).
+%% Highest version first, as `lists:sort/2' wants it. The order is the one
+%% Jellyfish (the Elixir/Mix library) uses to pick the previous version, so
+%% both tools diff against the same one:
+%%
+%%   * the numeric parts decide first, compared as numbers and not as text,
+%%     and any number of them is accepted ("1.2" and "1.2.0" are the same);
+%%   * a pre-release ("1.0.0-rc1") is lower than its release, and its
+%%     identifiers compare as Semantic Versioning says: numbers as numbers
+%%     and below text, a shorter list below a longer one that starts with it;
+%%   * build metadata ("1.0.0+abc") is ignored;
+%%   * a `git describe' version ("1.0.0-4-gabc1234") is its release plus the
+%%     number of commits since, so it is higher than that release;
+%%   * a version that is none of these is lower than every one that is, and
+%%     compares as text with another of its kind.
+%%
+%% A build identifier after the version ("0.1.0-9cad9cd") is a pre-release
+%% identifier, compared as text: two builds of the same version are ordered
+%% by that text and not by when they were built.
 compare_versions(V1, V2) ->
-    parsed_version(V1) >= parsed_version(V2).
+    version_key(V1) >= version_key(V2).
+
+version_key(V) ->
+    case re:run(V, "^([0-9]+(?:\\.[0-9]+)*)-([0-9]+)-[0-9A-Ga-g]+$", [{capture, all_but_first, list}]) of
+        {match, [Base, Commits]} ->
+            {1, numeric_parts(Base), {1, []}, list_to_integer(Commits)};
+        nomatch ->
+            parsed_version(V)
+    end.
 
 parsed_version(V) ->
+    [WithoutBuild | _] = string:split(V, "+"),
+    {Base, Pre} =
+        case string:split(WithoutBuild, "-") of
+            [B] -> {B, release};
+            [B, P] -> {B, P}
+        end,
     try
-        [list_to_integer(Part) || Part <- string:split(V, ".", all)]
+        {1, numeric_parts(Base), pre_release_key(Pre), 0}
     catch
-        _:_ -> V
+        _:_ -> {0, V}
     end.
+
+%% Trailing zeros are dropped, so "1.2" and "1.2.0" compare as equal.
+numeric_parts(Base) ->
+    Parts = [digits_to_integer(Part) || Part <- string:split(Base, ".", all)],
+    lists:reverse(lists:dropwhile(fun(Part) -> Part =:= 0 end, lists:reverse(Parts))).
+
+%% A release is higher than any of its pre-releases.
+pre_release_key(release) ->
+    {1, []};
+pre_release_key(Pre) ->
+    {0, [pre_release_identifier(Id) || Id <- string:split(Pre, ".", all)]}.
+
+pre_release_identifier([]) ->
+    error(empty_identifier);
+pre_release_identifier(Id) ->
+    case lists:all(fun is_digit/1, Id) of
+        true -> {0, list_to_integer(Id)};
+        false -> {1, Id}
+    end.
+
+digits_to_integer([]) ->
+    error(empty_part);
+digits_to_integer(Part) ->
+    true = lists:all(fun is_digit/1, Part),
+    list_to_integer(Part).
+
+is_digit(C) -> C >= $0 andalso C =< $9.

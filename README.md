@@ -60,11 +60,28 @@ The overlay rule is written once and never needs to change between releases: the
 
 The plugin generates appup files for both your application code and your dependencies, so third-party libraries can be upgraded at runtime alongside your own code changes.
 Only dependencies that are part of the current profile (and therefore the release) are considered - there's no separate configuration for this, it follows rebar3's own profile system.
+That includes the dependencies your own dependencies bring in: `systools:make_relup/4` needs an appup for every application whose version changes, so a library the project never declares still gets one when an update moves it.
 
 > [!WARNING]
 > Not all code changes are safe for hot-upgrades.
 > Before performing a hot-upgrade, check whether the dependency supports hot-upgrades between versions, review the changelog for structural changes (e.g. process state modifications, API changes), and check stateful processes like `gen_server`s that may require special handling.
 > You can do this analysis yourself, or ask an LLM-based coding assistant to review the diff and changelog between the two versions and flag anything that looks unsafe for a hot-upgrade - but either way, someone should look before you ship it.
+
+### Which previous version is used
+
+An appup upgrades from one previous version, the highest one found in the release directory that an earlier build left on disk, other than the version being built.
+"Highest" follows the same order as Jellyfish, so both tools pick the same one:
+
+ * The numeric parts decide first, as numbers: `0.10.0` is higher than `0.9.0`. Any number of parts is accepted, and `1.2` is the same as `1.2.0`.
+ * A pre-release is lower than its release, `1.0.0-rc1` below `1.0.0`, and pre-releases are ordered as [Semantic Versioning](https://semver.org/#spec-item-11) says.
+ * Build metadata, `1.0.0+abc`, is ignored.
+ * A `git describe` version, `1.0.0-4-gabc1234`, is higher than `1.0.0`, and more commits is higher.
+ * A version that is none of these is lower than every one that is.
+
+> [!NOTE]
+> A build identifier after the version, such as `0.1.0-9cad9cd`, is ordered as text.
+> Two builds of the same version are therefore not ordered by when they were built.
+> When versions are named this way, keep a single previous version in the release directory: build the version that is deployed, then the new one.
 
 ## Appup file
 
