@@ -135,6 +135,25 @@ EOF
 
     check_jellyfish_json "$extract/lib/single_app-0.1.1/ebin/jellyfish.json" single_app project 0.1.0 0.1.1
     check_appup "$extract/lib/single_app-0.1.1/ebin/single_app.appup" 0.1.1 0.1.0
+
+    # rel/appups is kept between builds and the overlay copies all of it, so
+    # the files written for 0.1.1 are still there when 0.1.2 is built. They
+    # must not reach the release: DeployEx reads every jellyfish.json under
+    # lib/, and one for another upgrade of the project makes it a full deployment.
+    sed -i.bak 's/0\.1\.1/0.1.2/' "$proj/rebar.config" "$proj/src/single_app.app.src"
+    rm -f "$proj/rebar.config.bak" "$proj/src/single_app.app.src.bak"
+    write_worker "$proj" 3
+
+    log "--- single app: building v0.1.2 in the same directory ---"
+    build "$proj"
+
+    local next="$WORKDIR/single_app_extract_next"
+    mkdir -p "$next"
+    tar -xzf "$proj/_build/default/rel/single_app/single_app-0.1.2.tar.gz" -C "$next"
+
+    check_jellyfish_json "$next/lib/single_app-0.1.2/ebin/jellyfish.json" single_app project 0.1.1 0.1.2
+    assert_no_file "$next/lib/single_app-0.1.1/ebin/jellyfish.json"
+    assert_no_file "$next/lib/single_app-0.1.1/ebin/single_app.appup"
 }
 
 # ===================================================================
