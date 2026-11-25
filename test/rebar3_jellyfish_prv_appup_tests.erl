@@ -124,6 +124,66 @@ previous_version_cases(RelDir) ->
         )
     ].
 
+%% ===================================================================
+%% previous_version/5 and previous_release/3 - a dependency is upgraded
+%% from the version the previous release shipped, not from the highest one
+%% the release directory still has.
+%% ===================================================================
+
+dependency_previous_version_test_() ->
+    {setup, fun setup_release_history/0, fun cleanup/1, fun dependency_previous_version_cases/1}.
+
+%% Three releases built in one directory: the dependency moved in the second
+%% one, so both of its versions are in lib/.
+setup_release_history() ->
+    RelDir = mk_tmp_dir(),
+    write_app_dir(RelDir, "myapp", "0.1.0"),
+    write_app_dir(RelDir, "myapp", "0.1.1"),
+    write_app_dir(RelDir, "mydep", "1.0.0"),
+    write_app_dir(RelDir, "mydep", "1.1.0"),
+    write_rel(RelDir, "0.1.0", [{myapp, "0.1.0"}, {mydep, "1.0.0"}, {kernel, "10.0", load}]),
+    write_rel(RelDir, "0.1.1", [{myapp, "0.1.1"}, {mydep, "1.1.0"}, {kernel, "10.0", load}]),
+    RelDir.
+
+dependency_previous_version_cases(RelDir) ->
+    First = rebar3_jellyfish_prv_appup:previous_release(RelDir, myapp, "0.1.0"),
+    Second = rebar3_jellyfish_prv_appup:previous_release(RelDir, myapp, "0.1.1"),
+    Previous = fun(Vsn, Release) ->
+        rebar3_jellyfish_prv_appup:previous_version(RelDir, "mydep", Vsn, dependency, Release)
+    end,
+    [
+        ?_assertEqual(#{"myapp" => "0.1.0", "mydep" => "1.0.0", "kernel" => "10.0"}, First),
+        ?_assertEqual(
+            undefined, rebar3_jellyfish_prv_appup:previous_release(RelDir, myapp, "9.9.9")
+        ),
+        % The build of 0.1.1: the dependency moves from what 0.1.0 shipped
+        ?_assertEqual({"1.0.0", filename:join(RelDir, "lib/mydep-1.0.0")}, Previous("1.1.0", First)),
+        % The build of 0.1.2: 0.1.1 already shipped 1.1.0, although 1.0.0 is
+        % still in lib/
+        ?_assertEqual(none, Previous("1.1.0", Second)),
+        % A dependency the previous release did not have
+        ?_assertEqual(
+            none,
+            rebar3_jellyfish_prv_appup:previous_version(RelDir, "other", "1.0.0", dependency, Second)
+        ),
+        % The previous release is not known: what is in lib/ decides, as before
+        ?_assertEqual(
+            {"1.0.0", filename:join(RelDir, "lib/mydep-1.0.0")}, Previous("1.1.0", undefined)
+        ),
+        % A project application is never looked up in the previous release
+        ?_assertEqual(
+            {"0.1.1", filename:join(RelDir, "lib/myapp-0.1.1")},
+            rebar3_jellyfish_prv_appup:previous_version(RelDir, "myapp", "0.1.2", project, Second)
+        )
+    ].
+
+write_rel(RelDir, Vsn, Apps) ->
+    RelFile = filename:join([RelDir, "releases", Vsn, "myapp.rel"]),
+    ok = filelib:ensure_dir(RelFile),
+    ok = file:write_file(
+        RelFile, io_lib:format("~p.~n", [{release, {"myapp", Vsn}, {erts, "16.0"}, Apps}])
+    ).
+
 %% A .app directory left over from a failed or foreign build shouldn't take
 %% down version discovery for every other, perfectly fine, directory.
 malformed_dotapp_test_() ->
