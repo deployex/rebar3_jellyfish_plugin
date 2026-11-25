@@ -65,9 +65,15 @@ do(State) ->
     RootDir = rebar_dir:root_dir(State),
 
     % The overlay rule the consuming project declares (see the module doc)
-    % always points at this directory, even on the very first build when
-    % nothing below has a previous version to diff against yet - so it
-    % must exist unconditionally, or relx's overlay copy step fails outright.
+    % copies all of this directory into the release, so it only holds what
+    % this build writes: what an earlier build left is removed first. An
+    % appup and a jellyfish.json for another upgrade would reach the release
+    % otherwise, where DeployEx reads them as part of this one. The
+    % directory must exist even when nothing is written, or relx's overlay
+    % copy step fails outright.
+    AppupsDir = filename:join([RootDir, "rel", "appups", "lib"]),
+    ok = remove_dir(AppupsDir),
+    ok = remove_shipped(RelDir),
     ok = filelib:ensure_dir(filename:join([RootDir, "rel", "appups", "lib", "x"])),
 
     Apps =
@@ -99,8 +105,36 @@ format_error(Reason) ->
 %% Private
 %% ===================================================================
 
-%% Only used to discover previously-built versions on disk, never written
-%% to: relx (not this plugin) owns copying apps into the release tree.
+%% The overlay of an earlier build put its appups and their jellyfish.json
+%% in the release directory, which is kept between builds since it is where
+%% the previous versions are found, and relx packs all of its lib/. Without
+%% this, the release of 0.1.2 carries the files that described 0.1.0 to
+%% 0.1.1, and a dependency that moved once is announced in every release.
+%% Only an appup with a jellyfish.json next to it is one of ours: the ones
+%% OTP ships with its applications are left alone.
+remove_shipped(undefined) ->
+    ok;
+remove_shipped(RelDir) ->
+    lists:foreach(
+        fun(Json) ->
+            Ebin = filename:dirname(Json),
+            _ = [file:delete(Appup) || Appup <- filelib:wildcard(filename:join(Ebin, "*.appup"))],
+            file:delete(Json)
+        end,
+        filelib:wildcard(filename:join([RelDir, "lib", "*", "ebin", "jellyfish.json"]))
+    ).
+
+remove_dir(Dir) ->
+    case file:del_dir_r(Dir) of
+        ok -> ok;
+        {error, enoent} -> ok;
+        {error, _} = Error -> Error
+    end.
+
+%% Where the previously-built versions are found. Nothing is written to it:
+%% relx (not this plugin) owns copying apps into the release tree. The files
+%% an earlier build of this plugin left there are removed, see
+%% remove_shipped/1.
 release_dir(State) ->
     RelxConfig = rebar_state:get(State, relx, []),
     case lists:keyfind(release, 1, RelxConfig) of
