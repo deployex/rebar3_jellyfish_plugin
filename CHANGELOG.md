@@ -1,5 +1,14 @@
 # CHANGELOG (v0.1.x)
 
+## 0.1.6 🚀 (2026-11-25)
+
+### Backwards incompatible changes for 0.1.5
+ * None
+
+### Bug fixes
+ * [`PULL-16`](https://github.com/deployex/rebar3_jellyfish_plugin/pull/16) Remove what earlier builds left before generating the appups
+ * [`PULL-17`](https://github.com/deployex/rebar3_jellyfish_plugin/pull/17) Upgrade a dependency from the version the previous release shipped
+
 ## 0.1.5 🚀 (2026-11-24)
 
 ### Backwards incompatible changes for 0.1.4
