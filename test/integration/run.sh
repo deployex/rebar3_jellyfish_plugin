@@ -300,6 +300,25 @@ EOF
     assert_no_file "$extract/lib/lib_direct-1.0.0/ebin/jellyfish.json"
 
     check_relup "$rel" dep_app 0.1.1 0.1.0
+
+    # The release directory keeps lib_transitive-1.0.0 next to 1.1.0. A third
+    # build that only changes the project must not write the appup of
+    # lib_transitive again: the previous release already shipped 1.1.0.
+    sed -i.bak 's/0\.1\.1/0.1.2/' "$proj/rebar.config" "$proj/src/dep_app.app.src"
+    rm -f "$proj/rebar.config.bak" "$proj/src/dep_app.app.src.bak"
+    write_worker "$proj" 3
+
+    log "--- transitive dependency: building v0.1.2 (lib_transitive still 1.1.0) ---"
+    build "$proj"
+
+    local next="$WORKDIR/dep_app_extract_next"
+    mkdir -p "$next"
+    tar -xzf "$rel/dep_app-0.1.2.tar.gz" -C "$next"
+
+    check_jellyfish_json "$next/lib/dep_app-0.1.2/ebin/jellyfish.json" dep_app project 0.1.1 0.1.2
+    assert_no_file "$next/lib/lib_transitive-1.1.0/ebin/jellyfish.json"
+    assert_no_file "$next/lib/lib_transitive-1.1.0/ebin/lib_transitive.appup"
+    assert_no_file "$proj/rel/appups/lib/lib_transitive-1.1.0/ebin/lib_transitive.appup"
 }
 
 # ===================================================================

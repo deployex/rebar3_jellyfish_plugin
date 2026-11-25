@@ -30,7 +30,7 @@
 -export([init/1, do/1, format_error/1]).
 
 -ifdef(TEST).
--export([compare_versions/2, previous_version/3]).
+-export([compare_versions/2, previous_version/3, previous_version/5, previous_release/3]).
 -endif.
 
 -define(PROVIDER, appup).
@@ -82,7 +82,7 @@ do(State) ->
         [{rebar_app_info:name(A), dependency, rebar_app_info:vsn(A), rebar_app_info:out_dir(A)}
             || A <- rebar_state:all_deps(State)],
 
-    case process_apps(Apps, RelDir, RootDir) of
+    case process_apps(Apps, RelDir, RootDir, undefined) of
         ok -> {ok, State};
         {error, Reason} ->
             % rebar3 prints the error of a provider run as a hook as a raw
@@ -148,25 +148,89 @@ release_dir(State) ->
             undefined
     end.
 
-process_apps(_Apps, undefined, _RootDir) ->
+%% The project applications come first, and the first one that has a
+%% previous version says which release this build upgrades from, see
+%% previous_release/3. The dependencies are then checked against it.
+process_apps(_Apps, undefined, _RootDir, _PreviousRelease) ->
     ok;
-process_apps([], _RelDir, _RootDir) ->
+process_apps([], _RelDir, _RootDir, _PreviousRelease) ->
     ok;
-process_apps([{NameBin, Type, Vsn, AppDir} | Rest], RelDir, RootDir) ->
+process_apps([{NameBin, Type, Vsn, AppDir} | Rest], RelDir, RootDir, PreviousRelease0) ->
     App = binary_to_atom(NameBin, utf8),
     AppStr = atom_to_list(App),
 
-    case previous_version(RelDir, AppStr, Vsn) of
+    case previous_version(RelDir, AppStr, Vsn, Type, PreviousRelease0) of
         none ->
-            process_apps(Rest, RelDir, RootDir);
+            process_apps(Rest, RelDir, RootDir, PreviousRelease0);
         {V1, V1Path} ->
+            PreviousRelease =
+                case {Type, PreviousRelease0} of
+                    {project, undefined} -> previous_release(RelDir, App, V1);
+                    _ -> PreviousRelease0
+                end,
             case generate(App, AppStr, Type, Vsn, AppDir, V1, V1Path, RootDir) of
                 ok ->
-                    process_apps(Rest, RelDir, RootDir);
+                    process_apps(Rest, RelDir, RootDir, PreviousRelease);
                 {error, Reason} ->
                     {error, {appup_failed, AppStr, Reason}}
             end
     end.
+
+%% The release directory keeps the libraries of every release built in it,
+%% so a dependency that moved once has two versions there for good. The one
+%% to upgrade from is the one the previous release shipped, and not the
+%% highest one around: a dependency that has not moved since would get the
+%% same appup again in every release, and one that went down a version and
+%% up again would be upgraded from a version no node runs.
+%%
+%% A dependency the previous release had at this version, or did not have,
+%% gets no appup. When the previous release is not known, the versions that
+%% are there are used, as for a project application.
+previous_version(RelDir, App, CurrentVsn, dependency, PreviousRelease) when
+    is_map(PreviousRelease)
+->
+    case maps:get(App, PreviousRelease, undefined) of
+        undefined ->
+            none;
+        CurrentVsn ->
+            none;
+        Vsn ->
+            Dir = filename:join([RelDir, "lib", App ++ "-" ++ Vsn]),
+            case app_vsn(Dir, App) of
+                {ok, Vsn} -> {Vsn, Dir};
+                _ -> none
+            end
+    end;
+previous_version(RelDir, App, CurrentVsn, _Type, _PreviousRelease) ->
+    previous_version(RelDir, App, CurrentVsn).
+
+%% The applications of the release that has App at Vsn, as a map of name to
+%% version, from its .rel in the release directory. undefined when no
+%% release there has it, or none can be read.
+previous_release(RelDir, App, Vsn) ->
+    RelFiles = filelib:wildcard(filename:join([RelDir, "releases", "*", "*.rel"])),
+    previous_release(RelFiles, App, Vsn, undefined).
+
+previous_release([], _App, _Vsn, Found) ->
+    Found;
+previous_release([RelFile | Rest], App, Vsn, undefined) ->
+    Found =
+        case file:consult(RelFile) of
+            {ok, [{release, _Name, _Erts, Apps}]} when is_list(Apps) ->
+                Versions = maps:from_list([
+                    {atom_to_list(element(1, A)), element(2, A)}
+                 || A <- Apps, is_tuple(A), tuple_size(A) >= 2, is_atom(element(1, A))
+                ]),
+                case maps:get(atom_to_list(App), Versions, undefined) of
+                    Vsn -> Versions;
+                    _ -> undefined
+                end;
+            _ ->
+                undefined
+        end,
+    previous_release(Rest, App, Vsn, Found);
+previous_release(_RelFiles, _App, _Vsn, Found) ->
+    Found.
 
 %% An appup written by hand for this upgrade is used as it is, see
 %% jellyfish_override.
